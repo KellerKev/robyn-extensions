@@ -1,0 +1,26 @@
+[package]
+name = "robyn_python"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lib]
+name = "robyn_extensions"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3.workspace = true
+pyo3-asyncio.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+jsonwebtoken.workspace = true
+
+robyn_validation = { path = "../robyn_validation" }
+robyn_openapi = { path = "../robyn_openapi" }
+robyn_ratelimit = { path = "../robyn_ratelimit" }
+robyn_auth = { path = "../robyn_auth" }
+
+[build-dependencies]
+pyo3-build-config = "0.20"

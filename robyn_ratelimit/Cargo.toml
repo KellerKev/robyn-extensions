@@ -1,0 +1,18 @@
+[package]
+name = "robyn_ratelimit"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+governor.workspace = true
+dashmap.workspace = true
+tokio.workspace = true
+futures.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+
+[lib]
+name = "robyn_ratelimit"
+path = "src/lib.rs"

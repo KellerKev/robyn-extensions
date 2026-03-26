@@ -1,0 +1,105 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "robyn-extensions"
+version = "0.1.0"
+description = "FastAPI-like features for Robyn: validation, OpenAPI, rate limiting, OAuth"
+authors = [
+    {name = "Kevin Keller", email = "kellerkev@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+keywords = ["robyn", "fastapi", "validation", "openapi", "oauth", "rate-limiting"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Rust",
+]
+
+dependencies = [
+    "pydantic>=2.0",
+    "robyn",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "black>=23.0",
+    "ruff>=0.1",
+    "mypy>=1.0",
+]
+yaml = [
+    "pyyaml>=6.0",
+]
+
+[project.urls]
+Homepage = "https://kevinkeller.org"
+Documentation = "https://github.com/KellerKev/robyn-extensions"
+Repository = "https://github.com/KellerKev/robyn-extensions"
+
+[tool.maturin]
+python-source = "robyn_python/python"
+module-name = "robyn_extensions._robyn_extensions"
+features = ["pyo3/extension-module"]
+manifest-path = "robyn_python/Cargo.toml"
+
+[tool.black]
+line-length = 100
+target-version = ['py38', 'py39', 'py310', 'py311']
+
+[tool.ruff]
+line-length = 100
+target-version = "py38"
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.pixi.project]
+channels = ["conda-forge"]
+platforms = ["osx-arm64", "linux-64", "osx-64", "win-64"]
+
+[tool.pixi.pypi-dependencies]
+
+[tool.pixi.dependencies]
+python = "3.12.*"
+rust = ">=1.70"
+maturin = ">=1.0,<2.0"
+uv = "*"
+pip = "*"
+cryptography = ">=46.0.2,<47"
+pyjwt = ">=2.10.1,<3"
+
+[tool.pixi.feature.dev.dependencies]
+pytest = ">=7.0"
+pytest-asyncio = ">=0.21"
+black = ">=23.0"
+ruff = ">=0.1"
+mypy = ">=1.0"
+
+[tool.pixi.feature.dev.tasks]
+build = "maturin build --release"
+develop = "maturin develop --skip-install"
+test = "pytest robyn_python/tests/"
+test-rust = "cargo test"
+fmt = "black . && cargo fmt"
+lint = "ruff check . && cargo clippy"
+check = "cargo check"
+check-rust = "cargo check"
+
+[tool.pixi.environments]
+default = { features = ["dev"], solve-group = "default" }
+dev = { features = ["dev"], solve-group = "default" }
