@@ -1,254 +1,159 @@
 """
-Complete example showing all features of robyn-extensions.
+Complete example showing all features of robyn-extensions:
+  - Pydantic v2-compatible models with field constraints and validators
+  - Request body and query parameter validation
+  - Rate limiting with presets
+  - OpenAPI auto-documentation (Swagger UI + ReDoc)
+  - JWT authentication with scope-based access control
 """
 
-from robyn import Robyn
-from robyn_extensions import body, query, oauth, rate_limit, openapi_route, OpenAPIGenerator
-from pydantic import BaseModel, EmailStr, Field
-from typing import Optional
+from robyn import Robyn, Request
+from robyn_extensions import (
+    # Models
+    BaseModel, Field, computed_field, field_validator, model_validator,
+    # Decorators
+    body_v2, query, returns, validated_route,
+    # Rate limiting
+    rate_limit, strict, moderate,
+    # Auth
+    setup_auth, AuthConfig, require_auth, optional_auth, admin_required,
+    # OpenAPI
+    AutoDocs,
+)
+from typing import Optional, List
 
-# Initialize Robyn app
 app = Robyn(__file__)
 
-# Initialize OpenAPI generator
-openapi = OpenAPIGenerator(
-    title="My API",
-    version="1.0.0",
-    description="Example API with validation, auth, and rate limiting"
-)
+# --- Auth setup (uncomment with your provider) ---
+# setup_auth(AuthConfig.auth0(domain="your-app.auth0.com", audience="your-api"))
 
-# Configure OAuth (example with Auth0)
-# app.config.oauth.jwks_url = "https://your-domain.auth0.com/.well-known/jwks.json"
-# app.config.oauth.audience = "your-api-identifier"
-# app.config.oauth.issuer = "https://your-domain.auth0.com/"
+# --- Auto-documentation ---
+docs = AutoDocs(app, title="Example API", version="1.0.0", description="Full-featured Robyn API")
 
 
 # === Models ===
 
 class UserCreate(BaseModel):
-    """User creation model."""
-    name: str = Field(..., min_length=2, max_length=100)
-    email: EmailStr
-    age: int = Field(..., ge=0, le=150)
-    bio: Optional[str] = None
+    username: str = Field(min_length=3, max_length=20)
+    email: str = Field(regex=r"^[\w\.-]+@[\w\.-]+\.\w+$")
+    age: int = Field(ge=18, le=120)
+    bio: Optional[str] = Field(default=None, max_length=500)
+
+    @field_validator('username')
+    @classmethod
+    def no_reserved_names(cls, v):
+        if v.lower() in ('admin', 'root', 'system'):
+            raise ValueError('Reserved username')
+        return v
 
 
 class UserResponse(BaseModel):
-    """User response model."""
     id: int
-    name: str
+    username: str
     email: str
     age: int
 
-
-class QueryParams(BaseModel):
-    """Query parameters for listing users."""
-    page: int = Field(1, ge=1)
-    limit: int = Field(10, ge=1, le=100)
-    search: Optional[str] = None
+    @computed_field
+    @property
+    def is_adult(self) -> bool:
+        return self.age >= 18
 
 
-class LoginRequest(BaseModel):
-    """Login credentials."""
-    email: EmailStr
-    password: str = Field(..., min_length=8)
+class SearchParams(BaseModel):
+    q: str = Field(default="")
+    page: int = Field(ge=1, default=1)
+    limit: int = Field(ge=1, le=100, default=20)
+
+
+class PasswordChange(BaseModel):
+    old_password: str = Field(min_length=8)
+    new_password: str = Field(min_length=8)
+    confirm_password: str = Field(min_length=8)
+
+    @model_validator(mode='after')
+    def passwords_match(self):
+        if self.new_password != self.confirm_password:
+            raise ValueError('New password and confirmation do not match')
+        if self.old_password == self.new_password:
+            raise ValueError('New password must differ from old password')
+        return self
 
 
 # === Routes ===
 
 @app.get("/")
-@rate_limit(requests=100, per_seconds=60)
-def index(request):
-    """Welcome endpoint."""
-    return {"message": "Welcome to the API"}
+@moderate()
+def index(request: Request):
+    return {"message": "Welcome to the API", "docs": "/docs"}
 
 
 @app.post("/users")
-@body(UserCreate, description="User data to create")
-@oauth(required=True)
+@body_v2(UserCreate)
 @rate_limit(requests=10, per_seconds=60)
-@openapi_route(
-    summary="Create a new user",
-    description="Creates a new user with validation",
-    tags=["users"],
-    responses={
-        201: {"description": "User created successfully"},
-        422: {"description": "Validation error"}
-    }
-)
-def create_user(request, user: UserCreate):
-    """Create a new user (authenticated)."""
-    # Access authenticated user
-    authenticated_user = request.user
-    
-    # In real app, save to database
-    new_user = {
-        "id": 1,
-        "name": user.name,
-        "email": user.email,
-        "age": user.age,
-        "created_by": authenticated_user.sub
-    }
-    
-    return {
-        "status_code": 201,
-        "body": new_user
-    }
+def create_user(request: Request, user: UserCreate):
+    '''Create a new user account with validation'''
+    return UserResponse(
+        id=1, username=user.username, email=user.email, age=user.age
+    ).model_dump()
 
 
 @app.get("/users")
-@query(QueryParams, description="Pagination and search parameters")
+@query(SearchParams)
 @rate_limit(requests=100, per_seconds=60)
-@openapi_route(
-    summary="List users",
-    description="Get paginated list of users with optional search",
-    tags=["users"]
-)
-def list_users(request, params: QueryParams):
-    """List users with pagination."""
-    # In real app, query database
+def list_users(request, params: SearchParams):
+    '''Search and list users with pagination'''
     users = [
-        {"id": 1, "name": "Alice", "email": "alice@example.com", "age": 30},
-        {"id": 2, "name": "Bob", "email": "bob@example.com", "age": 25},
+        {"id": 1, "username": "alice", "email": "alice@example.com", "age": 30},
+        {"id": 2, "username": "bob", "email": "bob@example.com", "age": 25},
     ]
-    
-    # Apply search filter
-    if params.search:
-        users = [u for u in users if params.search.lower() in u["name"].lower()]
-    
-    # Apply pagination
+    if params.q:
+        users = [u for u in users if params.q.lower() in u["username"].lower()]
     start = (params.page - 1) * params.limit
-    end = start + params.limit
-    
-    return {
-        "users": users[start:end],
-        "page": params.page,
-        "limit": params.limit,
-        "total": len(users)
-    }
+    return {"users": users[start:start + params.limit], "total": len(users)}
 
 
-@app.get("/users/<user_id>")
-@oauth(required=False)  # Optional auth
-@rate_limit(requests=50, per_seconds=60)
-@openapi_route(
-    summary="Get user by ID",
-    description="Retrieve a single user by ID",
-    tags=["users"]
-)
-def get_user(request, user_id: int):
-    """Get user by ID (optionally authenticated)."""
-    # Check if authenticated
-    is_authenticated = hasattr(request, "user")
-    
-    # In real app, query database
-    user = {"id": user_id, "name": "Alice", "email": "alice@example.com", "age": 30}
-    
-    # Add extra data for authenticated users
-    if is_authenticated:
-        user["private_info"] = "Only visible when authenticated"
-    
-    return user
+@app.get("/users/:id")
+@returns(UserResponse)
+def get_user(request: Request):
+    '''Get a user by ID'''
+    return UserResponse(id=1, username="alice", email="alice@example.com", age=30)
 
 
-@app.post("/auth/login")
-@body(LoginRequest)
-@rate_limit(requests=5, per_seconds=60)  # Strict rate limit for auth
-@openapi_route(
-    summary="Login",
-    description="Authenticate and get JWT token",
-    tags=["auth"]
-)
-def login(request, credentials: LoginRequest):
-    """Login endpoint."""
-    # In real app, verify credentials and generate JWT
-    # This is just an example
-    
-    if credentials.email == "test@example.com" and credentials.password == "password123":
-        return {
-            "token": "eyJ...",  # Generate real JWT here
-            "token_type": "bearer",
-            "expires_in": 3600
-        }
-    
-    return {
-        "status_code": 401,
-        "body": {"error": "Invalid credentials"}
-    }
+# Uncomment these routes if auth is configured:
 
-
-@app.get("/protected")
-@oauth(required=True)
-@rate_limit(requests=20, per_seconds=60)
-@openapi_route(
-    summary="Protected endpoint",
-    description="Requires valid JWT token",
-    tags=["protected"]
-)
-def protected(request):
-    """Protected endpoint requiring authentication."""
-    user = request.user
-    return {
-        "message": "You are authenticated!",
-        "user_id": user.sub,
-        "email": user.extra.get("email", "N/A")
-    }
-
-
-# === OpenAPI Documentation Endpoints ===
-
-@app.get("/openapi.json")
-def openapi_spec(request):
-    """Serve OpenAPI spec as JSON."""
-    return {
-        "headers": {"Content-Type": "application/json"},
-        "body": openapi.to_json()
-    }
-
-
-@app.get("/docs")
-def swagger_ui(request):
-    """Serve Swagger UI for API documentation."""
-    html = """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>API Documentation</title>
-        <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
-    </head>
-    <body>
-        <div id="swagger-ui"></div>
-        <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
-        <script>
-            SwaggerUIBundle({
-                url: '/openapi.json',
-                dom_id: '#swagger-ui',
-                presets: [
-                    SwaggerUIBundle.presets.apis,
-                    SwaggerUIBundle.SwaggerUIStandalonePreset
-                ]
-            });
-        </script>
-    </body>
-    </html>
-    """
-    return {
-        "headers": {"Content-Type": "text/html"},
-        "body": html
-    }
-
-
-# === Register routes with OpenAPI ===
-# In a real integration, this would be automatic
-openapi.add_route("/", "GET", index, tags=["general"])
-openapi.add_route("/users", "POST", create_user, tags=["users"])
-openapi.add_route("/users", "GET", list_users, tags=["users"])
-openapi.add_route("/users/{user_id}", "GET", get_user, tags=["users"])
-openapi.add_route("/auth/login", "POST", login, tags=["auth"])
-openapi.add_route("/protected", "GET", protected, tags=["protected"])
+# @app.get("/me")
+# @require_auth()
+# def get_me(request: Request):
+#     '''Get the current authenticated user'''
+#     return {"user_id": request.user.sub, "claims": request.user.extra}
+#
+#
+# @app.get("/feed")
+# @optional_auth()
+# def feed(request: Request):
+#     '''Public feed, personalized if authenticated'''
+#     if hasattr(request, 'user'):
+#         return {"feed": "personalized", "user": request.user.sub}
+#     return {"feed": "default"}
+#
+#
+# @app.delete("/users/:id")
+# @admin_required()
+# def delete_user(request: Request):
+#     '''Delete a user (admin only)'''
+#     return {"deleted": True}
+#
+#
+# @app.post("/users/:id/password")
+# @body_v2(PasswordChange)
+# @require_auth()
+# @strict()
+# def change_password(request: Request, data: PasswordChange):
+#     '''Change user password (strict rate limit)'''
+#     return {"message": "Password changed"}
 
 
 if __name__ == "__main__":
     app.start(port=8080)
-    print("API running at http://localhost:8080")
-    print("Docs available at http://localhost:8080/docs")
+    # Visit http://localhost:8080/docs for Swagger UI
+    # Visit http://localhost:8080/redoc for ReDoc
